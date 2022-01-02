@@ -4,7 +4,7 @@ python=3.8.12
 torch=1.4.0
 torchvision=0.5.0
 ## Config
-Edit the paths accordingly in config.py
+Edit the paths accordingly in `config.py`
 ## DataSets
 The code supports training UAPs on ImageNet, MS COCO, PASCAL VOC
 ### ImageNet
