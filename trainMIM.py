@@ -92,7 +92,7 @@ def main():
                          if name.islower() and not name.startswith("__")
                          and callable(models.__dict__[name]))
 
-    model_types = ['vgg16', 'resnet50', 'googlenet']
+    model_types = ['vgg16', 'resnet50', 'densenet121']
     model_weight = 1 / args.model_nums
     models_set = []
     adv_weight = []
