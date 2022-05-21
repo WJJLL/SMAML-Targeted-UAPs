@@ -7,18 +7,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import torchvision.datasets as datasets
+import torchvision.datasets as dsets
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from gaussian_smoothing import *
+# from gaussian_smoothing import *
 from config import  IMAGENET_Test_PATH
 # Purifier
 from NRP import *
 import random
-from metrics_evalute import metrics_evaluate
+# from metrics_evalute import metrics_evaluate
 from UAP import UAP
-
+from robustness import model_utils,datasets
 
 import logging
 logger = logging.getLogger(__name__)
@@ -38,11 +38,11 @@ parser.add_argument('--source_model', type=str, default='resnet50', help='TTP Di
  ens_res18_res50_res101_res152\
  ens_dense121_161_169_201}')
 parser.add_argument('--source_domain', type=str, default='IN', help='Source Domain (TTP): Natural Images (IN) or painting')
-parser.add_argument('--gs', action='store_true', help='Apply gaussian smoothing')
-
+parser.add_argument('--di', action='store_true', help='Apply di')
+parser.add_argument('--ti', action='store_true', help='Apply ti')
 # For purification (https://github.com/Muzammal-Naseer/NRP)
 parser.add_argument('--NRP', action='store_true', help='Apply Neural Purification to reduce adversarial effect')
-
+parser.add_argument('--save_dir', type=str, default='pretrained_generators', help='Directory to save generators')
 parser.add_argument('--ngpu', type=int, default=1,
                     help='Number of used GPUs (0 = CPU) (default: 1)')
 args = parser.parse_args()
@@ -52,10 +52,10 @@ args.use_cuda = args.ngpu>0 and torch.cuda.is_available()
 # GPU
 # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # Set-up log file
-folder = os.path.exists('./1T_subsrc')
+folder = os.path.exists('./new_subsrc')
 if not folder:  # 判断是否存在文件夹如果不存在则创建为文件夹
-    os.makedirs('./1T_subsrc')
-logfile = '10T_data/TTP_10_target_eval_eps_{}_{}_to_{}_NRP_{}.log'.format(args.eps, args.source_model, args.target_model, args.NRP)
+    os.makedirs('./new_subsrc')
+logfile = 'new_subsrc/TTP_10_target_eval_eps_{}_{}_to_{}_NRP_{}.log'.format(args.eps, args.source_model, args.target_model, args.NRP)
 
 logging.basicConfig(
     format='[%(asctime)s] - %(message)s',
@@ -93,6 +93,31 @@ elif args.target_model == 'Augmix':
     model = torch.nn.DataParallel(model)
     checkpoint = torch.load('pretrained_models/checkpoint.pth.tar')
     model.load_state_dict(checkpoint["state_dict"])
+elif args.target_model == 'SIN-IN':
+    model = torchvision.models.resnet50(pretrained=False)
+    model = torch.nn.DataParallel(model)
+    checkpoint = torch.load('pretrained_models/resnet50_train_45_epochs_combined_IN_SF-2a0d100e.pth.tar')
+    model.load_state_dict(checkpoint["state_dict"])
+elif args.target_model == 'AT_LINF.5':
+    ds = datasets.ImageNet('')
+    model, _ = model_utils.make_and_restore_model(arch='resnet50', dataset=ds,
+                                                  resume_path='./pretrained_models/resnet50_linf_eps0.5.ckpt')
+    model = model.model
+elif args.target_model == 'AT_LINF1':
+    ds = datasets.ImageNet('')
+    model, _ = model_utils.make_and_restore_model(arch='resnet50', dataset=ds,
+                                                  resume_path='./pretrained_models/resnet50_linf_eps1.0.ckpt')
+    model = model.model
+elif args.target_model == 'AT_L2.1':
+    ds = datasets.ImageNet('')
+    model, _ = model_utils.make_and_restore_model(arch='resnet50', dataset=ds,
+                                                  resume_path='./pretrained_models/resnet50_l2_eps0.1.ckpt')
+    model = model.model
+elif args.target_model == 'AT_L2.5':
+    ds = datasets.ImageNet('')
+    model, _ = model_utils.make_and_restore_model(arch='resnet50', dataset=ds,
+                                                  resume_path='./pretrained_models/resnet50_l2_eps0.5.ckpt')
+    model = model.model
 else:
     assert (args.target_model in model_names), 'Please provide correct target model names: {}'.format(model_names)
 
@@ -105,8 +130,8 @@ model.eval()
 
 if args.NRP:
     purifier = NRP(3, 3, 64, 23)
-    purifier.load_state_dict(torch.load('pretrained_purifiers/NRP.pth'))
-    purifier = purifier.to(device)
+    purifier.load_state_dict(torch.load('./pretrained_models/NRP.pth'))
+    purifier = purifier.cuda()
 
 ####################
 # Data
@@ -128,7 +153,6 @@ def normalize(t):
     return t
 
 targets = [24,99,245,344,471,555,661,701,802,919]
-
 total_acc = 0
 total_fool = 0
 total_samples = 0
@@ -137,7 +161,7 @@ for idx, target in enumerate(targets):
 
     test_dir = IMAGENET_Test_PATH
 
-    test_set = datasets.ImageFolder(test_dir, data_transform)
+    test_set = dsets.ImageFolder(test_dir, data_transform)
 
     # Remove samples that belong to the target attack label.
     source_samples = []
@@ -156,12 +180,12 @@ for idx, target in enumerate(targets):
                use_cuda=args.use_cuda)
 
     netG.load_state_dict(torch.load(
-        './noise_model/netG_{}_{}_{}_{}_{}_{}_ce.pth'.format(args.main_type,args.source_model, args.source_domain,
-                                                          args.iterations, target, args.eps)))
+        './{}/netG_{}_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.save_dir,args.source_model, args.source_domain,
+                                                          args.iterations, target, args.eps,args.di,args.ti)))
     netG = netG.cuda()
     netG.eval()
-    logger.info('netG_{}_{}_{}_{}_{}_{}_ce.pth'.format(args.main_type,args.source_model, args.source_domain,
-                                                          args.iterations, target, args.eps))
+    logger.info('netG_{}_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.source_model, args.source_domain,
+                                                          args.iterations, target, args.eps,args.di,args.ti))
 
     # Reset Metrics
     acc=0
@@ -176,13 +200,13 @@ for idx, target in enumerate(targets):
 
 
         adv = netG(img).detach()
-        adv = torch.min(torch.max(adv, img - eps), img + eps)
+        # adv = torch.min(torch.max(adv, img - eps), img + eps)
         adv = torch.clamp(adv, 0.0, 1.0)
 
         if args.NRP:
             # Purify Adversary
-            adv = purifier(adv).detach()
-
+            with torch.no_grad():
+                adv = purifier(adv).detach()
         out = model(normalize(adv.clone().detach()))
         img_out = model(normalize(img.clone().detach()))
         acc += torch.sum(out.argmax(dim=-1) == target_label).item()
@@ -199,9 +223,3 @@ logger.info('Average Target Transferability')
 logger.info('*'*100)
 logger.info(' %d              %.4f\t \t %.4f\t %.4f',
             int(eps * 255), total_acc / total_samples,total_fool / total_samples, distance / (i + 1))
-
-
-
-
-
-
