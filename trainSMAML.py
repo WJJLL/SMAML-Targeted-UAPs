@@ -10,24 +10,47 @@ from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 import torchvision.models as models
-from gaussian_smoothing import *
 from config import COCO_2017_TRAIN_IMGS, COCO_2017_VAL_IMGS, COCO_2017_TRAIN_ANN, COCO_2017_VAL_ANN, VOC_2012_ROOT, \
     IMAGENET_Train_PATH, IMAGENET_Test_PATH
 from dataset_utils.voc0712 import VOCDetection
 from dataset_utils.coco import CocoDetection
 from utils import one_hot
 from utils import TwoCropTransform, rotation
-from custom_loss import  BoundedLogitLossFixedRef,Po_trip,target_logit_loss,RelavativeCrossEntropyTarget
 from UAP import UAP
 import random
 from modules.resnet import resnet50
 from collections import OrderedDict
 from random import sample
 import torch.nn.functional as F
-mean = [0.485, 0.456, 0.406]
-std = [0.229, 0.224, 0.225]
+from opti_adam import Adam
+from custom_loss import BoundedLogitLossFixedRef,LogitLoss,CrossEntropy,AbsLogitLoss
 scale_size = 256
 img_size = 224
+import math
+def keepGradUpdate(noiseData, optimizer, gradInfo, epsilon, ti=False):
+    if ti:
+        grad_c = F.conv2d(gradInfo.clone().unsqueeze(0), gaussian_kernel, bias=None, stride=1, padding=(2, 2), groups=3)
+        gradInfo = grad_c[0]
+    betas = optimizer.param_groups[0]["betas"]
+    beta1 = betas[0]
+    beta2 = betas[1]
+    weight_decay = optimizer.param_groups[0]["weight_decay"]
+    lr = optimizer.param_groups[0]["lr"]
+    bias_correction1 = 1 - betas[0]
+    bias_correction2 = 1 - betas[1]
+    exp_avg, exp_avg_sq = torch.zeros_like(noiseData), \
+                          torch.zeros_like(noiseData)
+    if weight_decay != 0:
+        gradInfo.add_(weight_decay, noiseData)
+    exp_avg.mul_(beta1).add_(1 - beta1, gradInfo)
+    # exp_avg=exp_avg *beta1+(1-beta1)*gradInfo
+    exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, gradInfo, gradInfo)
+    exp_avg_sq.add_(1e-8)  # to avoid possible nan in backward
+    denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(optimizer.param_groups[0]['eps'])
+    step_size = lr / bias_correction1
+    new_data = noiseData.addcdiv(-step_size, exp_avg, denom)
+    new_data = torch.clamp(new_data, -epsilon, epsilon)
+    return new_data
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Transferable Targeted Perturbations')
@@ -47,10 +70,12 @@ def parse_arguments():
                         help='Number of used GPUs (0 = CPU) (default: 1)')
     parser.add_argument('--confidence', default=0., type=float,
                         help='Confidence value for C&W losses (default: 0.0)')
-
+    parser.add_argument('--di', action='store_true', help='Apply di')
+    parser.add_argument('--ti', action='store_true', help='Apply ti')
+    parser.add_argument('--resume', action='store_true', help='Apply resume')
     parser.add_argument('--pretrained_seed', type=int, default=0,
                         help='Seed used in the generation process (default: 123)')
-    parser.add_argument('--loss_function', default='ce', 
+    parser.add_argument('--loss_function', default='ce',
                         help='Used loss function for source classes: (default: cw_logit)')
 
     args = parser.parse_args()
@@ -62,24 +87,42 @@ def parse_arguments():
     return args
 
 
-def normalize(t):
-    t[:, 0, :, :] = (t[:, 0, :, :] - mean[0]) / std[0]
-    t[:, 1, :, :] = (t[:, 1, :, :] - mean[1]) / std[1]
-    t[:, 2, :, :] = (t[:, 2, :, :] - mean[2]) / std[2]
-    return t
+def normalize(x):
+    """
+    Normalizes a batch of images with size (batch_size, 3, height, width)
+    by mean and std dev expected by PyTorch models
+    """
+    mean = torch.Tensor([0.485, 0.456, 0.406])
+    std = torch.Tensor([0.229, 0.224, 0.225])
+    return (x - mean.type_as(x)[None, :, None, None]) / std.type_as(x)[None, :, None, None]
 
 
+def DI(X, p=0.3, image_width=224, image_resize=256):
+    rnd = torch.randint(image_width, image_resize, ())
+    rescaled = nn.functional.interpolate(X, [rnd, rnd])
+    h_rem = image_resize - rnd
+    w_rem = image_resize - rnd
+    pad_top = torch.randint(0, h_rem, ())
+    pad_bottom = h_rem - pad_top
+    pad_left = torch.randint(0, w_rem, ())
+    pad_right = w_rem - pad_left
+    padded = nn.ConstantPad2d((pad_left, pad_right, pad_top, pad_bottom), 0.)(rescaled)
+    padded = nn.functional.interpolate(padded, [image_resize, image_resize])
+    return padded if torch.rand(()) < p else X
 
 
 class Meta(nn.Module):
-    def __init__(self, criterion, use_cuda, input_size, num_support, num_updates, epsilon, learning_rate):
+    def __init__(self, criterion, use_cuda, input_size, num_support, num_updates, epsilon, learning_rate, ti=False):
         super(Meta, self).__init__()
         self.net = UAP(shape=(input_size, input_size),
                        num_channels=3,
                        use_cuda=use_cuda)
         self.net.cuda()
         self.epsilon = epsilon
-        self.opt = torch.optim.Adam(self.net.parameters(), lr=learning_rate)
+        if ti:
+            self.opt = Adam(self.net.parameters(), lr=learning_rate)
+        else:
+            self.opt = torch.optim.Adam(self.net.parameters(), lr=learning_rate)
         self.criterion = criterion
         self.num_support = num_support
         self.num_updates = num_updates
@@ -91,81 +134,81 @@ class Meta(nn.Module):
         iteration = 0
         while (iteration < args.iterations):
             try:
-                img, target = next(data_iterator)
+                img, label = next(data_iterator)
             except StopIteration:
-                # StopIteration is thrown if dataset ends
-                # reinitialize data loader
                 data_iterator = iter(train_loader)
-                img, target = next(data_iterator)
-
-
-
-            # img = imgs[0].cuda()
-            img = img.cuda()
-
-            reptile_grads = {}
-            num_updates = 0
+                img, label = next(data_iterator)
 
             model_base = copy.deepcopy(self.net)
             rm_archs = sample(archs, 3)
-
-            adv_new = self.net(img)
-            adv_new = torch.clamp(adv_new,0,1)
-
-            for arch in rm_archs:
-                ##  reset weight for every task
+            loss_q = 0
+            for kk, arch in enumerate(rm_archs):
+                ## prepare data
+                img = img.cuda()
+                size = int(img.shape[0] / 2)
+                sup_set = img[:size]
+                label_spt = label[:size]
+                query_set = img[size:]
+                label_qry = label[size:]
+                sup_adv_before = self.net(sup_set)
+                sup_adv_before = torch.clamp(sup_adv_before, 0, 1)
+                # reset uap in every task
                 for k, (p, q) in enumerate(zip(self.net.parameters(), model_base.parameters())):
                     # p = copy.deepcopy(q)
                     p.data = q.data.clone()
+                # get temp uap
+                sup_adv = self.net(sup_set)
+                sup_adv = torch.clamp(sup_adv, 0, 1)
 
-                adv = self.net(img)
-                adv = torch.clamp(adv , 0, 1)
-
-                arch.eval()
-                arch.zero_grad()
-                adv_out = arch(normalize(torch.cat((adv,adv_new))))
-
-                target = torch.ones(adv_out.shape[0], dtype=torch.int64) * args.match_target
-                target = target.cuda()
-                if args.loss_function == "ce":
-                    loss = F.cross_entropy(adv_out, target.cuda())
-                elif args.loss_function == "r_ce" or args.loss_function == "po_trip":
-                    logit = arch(normalize(img))
-                    loss = self.criterion(adv_out, logit, target.cuda())
+                if args.di:
+                    adv_out = arch(normalize(DI(sup_adv)))
+                    adv_out_before = arch(normalize(DI(sup_adv_before)))
                 else:
-                    loss = self.criterion(adv_out, target.cuda())
-                self.opt.zero_grad()
-                loss.backward(retain_graph=True)
-                self.opt.step()
-                self.net.uap.data = torch.clamp(self.net.uap.data, -self.epsilon, self.epsilon)
-                adv_new = self.net(img)
-                adv_new = torch.clamp(adv_new, 0, 1)
+                    adv_out = arch(normalize(sup_adv))
+                    adv_out_before = arch(normalize(sup_adv_before))
 
-                for j, p in enumerate(self.net.parameters()):
-                    if (num_updates == 0):
-                        reptile_grads[j] = [p.data.clone().detach()]
-                    else:
-                        reptile_grads[j].append(p.data.clone().detach())
-                num_updates += 1
+                target_train = torch.ones(adv_out.shape[0], dtype=torch.int64) * args.match_target
+                loss = self.criterion(adv_out, target_train.cuda()) + self.criterion(adv_out_before, target_train.cuda())
+                grad = torch.autograd.grad(loss, self.net.parameters(), create_graph=True)[0]
+                # get temp uap
+                self.net.uap.data = keepGradUpdate(self.net.uap.data, self.opt, grad, self.epsilon)
+
+                # compute grad of task
+                qur_adv = self.net(query_set)
+                qur_adv = torch.clamp(qur_adv, 0, 1)
+                if args.di:
+                    qry_adv_out = arch(normalize(DI(qur_adv)))
+                else:
+                    qry_adv_out = arch(normalize(qur_adv))
+                target_test = torch.ones(qry_adv_out.shape[0], dtype=torch.int64) * args.match_target
+                loss_qry = self.criterion(qry_adv_out, target_test.cuda())
+                loss_q += loss_qry
 
             for k, (p, q) in enumerate(zip(self.net.parameters(), model_base.parameters())):
-                alpha = np.exp(-1.0 * ((1.0) / len(rm_archs)))
-                ll = torch.stack(reptile_grads[k])
-                p.data = torch.mean(ll, 0) * (alpha) + (1 - alpha) * q.data.clone()
-
+                # p = copy.deepcopy(q)
+                p.data = q.data.clone()
+            loss_ = loss_q / len(rm_archs)
+            self.opt.zero_grad()
+            loss_.backward()
+            self.opt.step()
             self.net.uap.data = torch.clamp(self.net.uap.data, -self.epsilon, self.epsilon)
-            running_loss += loss.item()
-
+            running_loss += loss_.item()
             iteration += 1
 
             if iteration % 100 == 99:
-                print('Epoch: {0} \t Batch: {1} \t loss: {2:.5f}'.format(0, iteration, running_loss / 100))
+                print(torch.argmax(rm_archs[0](normalize(self.net(img[0:30]))), dim=1))
+                print(torch.argmax(rm_archs[1](normalize(self.net(img[0:30]))), dim=1))
+                print(torch.argmax(rm_archs[2](normalize(self.net(img[0:30]))), dim=1))
+                print('Epoch: {0} \t Batch: {1} \t loss: {2:.5f} \t noise: {3:.5f}'.format(0, iteration,
+                                                                                           running_loss / 100,
+                                                                                           self.net.uap.data.norm()))
                 running_loss = 0
-            if iteration % 1000==0  and iteration != 0:
+            if iteration % 1000 == 0 and iteration != 0:
                 torch.save(self.net.state_dict(),
-                           args.save_dir + '/netG_ensSMaml_{}_{}_{}_{}_{}.pth'.format(args.model_type, args.src,
-                                                                                      iteration,
-                                                                                      args.match_target, args.eps))
+                           args.save_dir + '/netG_meta_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.src,
+                                                                                              iteration,
+                                                                                              args.match_target,
+                                                                                              args.eps,args.di,args.ti),_use_new_zipfile_serialization=False)
 def main():
     args = parse_arguments()
     random.seed(args.pretrained_seed)
@@ -173,20 +216,16 @@ def main():
     torch.manual_seed(args.pretrained_seed)
     torch.cuda.manual_seed(args.pretrained_seed)
     torch.cuda.manual_seed_all(args.pretrained_seed)
-
-    cudnn.deterministic = True
-    cudnn.benchmark = False
-
     #### save_dir path of trained uap
     if not os.path.isdir(args.save_dir):
         os.mkdir(args.save_dir)
     eps = args.eps / 255
 
     ### source domain model ##
-
     model_1 = models.__dict__['vgg16'](pretrained=True)
     model_2 = models.__dict__['resnet50'](pretrained=True)
-    model_3 = models.__dict__['googlenet'](pretrained=True)
+    model_3 = models.__dict__['densenet121'](pretrained=True)
+
     if torch.cuda.device_count() > 1:
         model_1 = torch.nn.DataParallel(model_1, device_ids=list(range(2)))
         model_2 = torch.nn.DataParallel(model_2, device_ids=list(range(2)))
@@ -199,19 +238,8 @@ def main():
     model_1.eval()
     model_2.eval()
     model_3.eval()
-    model_set = [model_1, model_2, model_3]
 
-    if args.loss_function == "logit":
-        criterion = target_logit_loss()
-    elif args.loss_function == "pcc":
-        criterion = BoundedLogitLossFixedRef(num_classes=1000, confidence=args.confidence,
-                                             use_cuda=args.use_cuda)
-    elif args.loss_function == 'po_trip':
-        criterion = Po_trip()
-    elif args.loss_function == 'r_ce':
-        criterion = RelavativeCrossEntropyTarget()
-    elif args.loss_function == "ce":
-        criterion =None
+    model_set = [model_1, model_2, model_3]
 
     if args.src == 'voc':
         train_transform = transforms.Compose([
@@ -230,6 +258,7 @@ def main():
     if args.src == 'IN':
         train_set = torchvision.datasets.ImageFolder(IMAGENET_Train_PATH,
                                                      train_transform)
+
     elif args.src == 'voc':
         train_set = VOCDetection(root=VOC_2012_ROOT,
                                  year="2012",
@@ -240,11 +269,20 @@ def main():
                                   annFile=COCO_2017_TRAIN_ANN,
                                   transform=train_transform)
 
+    if args.loss_function == "logit":
+        criterion = LogitLoss()
+    elif args.loss_function == "logitRef":
+        criterion = BoundedLogitLossFixedRef(num_classes=1000, confidence=args.confidence,
+                                             use_cuda=args.use_cuda)
+    elif args.loss_function == 'ce':
+        criterion = CrossEntropy()
+    elif args.loss_function == 'abslogit':
+        criterion = AbsLogitLoss(num_classes=1000, use_cuda=args.use_cuda)
+
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=4,
                                                pin_memory=True)
     train_size = len(train_set)
     print('Training data size:', train_size)
-
     learner = Meta(
         criterion=criterion,
         use_cuda=args.use_cuda,
@@ -259,3 +297,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
