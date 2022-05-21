@@ -134,11 +134,6 @@ def main():
         models_set.append(model)
         adv_weight.append(model_weight)
 
-    if args.model_nums == 4:
-        model = models.__dict__['alexnet'](pretrained=True)
-        models_set.append(model)
-
-
     netG = UAP(shape=(img_size, img_size),
                num_channels=3,
                use_cuda=args.use_cuda)
