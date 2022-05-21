@@ -32,6 +32,9 @@ Run `bash run.sh` to generate UAPs or test performance under 10-Targets setting.
 ## Noise models (UAPs)
 We provide targeted UAPs trained against Ensemble of ImageNet Model in the folder `noise_model`
 
+## Defense Models
+Evaluation against robust training [SIN](https://github.com/rgeirhos/Stylized-ImageNet), [Augmix](https://github.com/google-research/augmix),[Adversarial](https://github.com/microsoft/robust-models-transfer)
+
 ## References
 Code depends on [uap_virtual_data](https://github.com/phibenz/uap_virtual_data.pytorch). We thank them for their wonderful code base. 
 
