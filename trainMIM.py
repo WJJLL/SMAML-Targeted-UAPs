@@ -149,7 +149,7 @@ def main():
     elif args.loss_function == 'ce':
         criterion = CrossEntropy()
     elif args.loss_function == 'abslogit':
-    criterion = AbsLogitLoss(num_classes=1000, use_cuda=args.use_cuda)
+        criterion = AbsLogitLoss(num_classes=1000, use_cuda=args.use_cuda)
 
     if args.src == 'voc':
         train_transform = transforms.Compose([
