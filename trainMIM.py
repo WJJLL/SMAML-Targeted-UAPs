@@ -216,7 +216,7 @@ def main():
             adv_logit = adv_logit + w * adv_out
             
         if args.loss_function == 'r_ce':
-            loss = torch.nn.CrossEntropyLoss()(adv_logit, target) + torch.nn.CrossEntropyLoss()(logits_orig, target)
+            loss = torch.nn.CrossEntropyLoss()(adv_logit, target) + torch.nn.CrossEntropyLoss()(logits_orig, logits_orig.argmax(dim=-1).detach())
         else:
             loss = criterion(adv_logit, target)
         loss.backward()
