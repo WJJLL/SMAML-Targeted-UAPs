@@ -6,10 +6,6 @@ done
 
 
 TARGET_NETS="googlenet vgg16 vgg19_bn resnet50 densenet121 resnet152 wide_resnet50_2"
-Main_types='noise_model'
-for main_type in $Main_types; do
-	  for target_net in $TARGET_NETS; do
-		      CUDA_VISIBLE_DEVICES=0,1 python eval_10T.py --source_model meta --source_domain coco  --target_model $target_net  --batch_size 30 --eps 10 --iterations 4000 --save_dir 'noise_model'
-    done
+for target_net in $TARGET_NETS; do
+  CUDA_VISIBLE_DEVICES=0,1 python eval_10T.py  --target_model $target_net  --batch_size 30 --eps 16  --noise_path './noise_model/netG_meta_coco_'
 done
-
