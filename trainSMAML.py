@@ -61,7 +61,7 @@ def parse_arguments():
     parser.add_argument('--iterations', type=int, default=6000, help='Number of training iterations')
     parser.add_argument('--model_nums', type=int, default=3, help='Number of training models')
     parser.add_argument('--lr', type=float, default=0.0002, help='Initial learning rate for adam')
-    parser.add_argument('--eps', type=int, default=10, help='Perturbation Budget during training, eps')
+    parser.add_argument('--eps', type=int, default=16, help='Perturbation Budget during training, eps')
     parser.add_argument('--model_type', type=str, default='vgg16',
                         help='Model under attack (discrimnator)')
     parser.add_argument('--gs', action='store_true', help='Apply gaussian smoothing')
