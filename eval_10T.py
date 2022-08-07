@@ -31,8 +31,6 @@ parser.add_argument('--noise_path', type=str, default='./noise_model/netG_meta_c
 parser.add_argument('--target_model', type=str, default='vgg19_bn', help='Black-Box(unknown) model: SIN, Augmix etc')
 parser.add_argument('--source_model', type=str, default='meta')
 parser.add_argument('--source_domain', type=str, default='IN', help='Source Domain (TTP): Natural Images (IN) or painting')
-parser.add_argument('--di', action='store_true', help='Apply di')
-parser.add_argument('--ti', action='store_true', help='Apply ti')
 # For purification (https://github.com/Muzammal-Naseer/NRP)
 parser.add_argument('--NRP', action='store_true', help='Apply Neural Purification to reduce adversarial effect')
 parser.add_argument('--save_dir', type=str, default='pretrained_generators', help='Directory to save generators')
