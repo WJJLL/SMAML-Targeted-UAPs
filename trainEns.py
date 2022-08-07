@@ -47,7 +47,7 @@ def parse_arguments():
     parser.add_argument('--iterations', type=int, default=6000, help='Number of training iterations')
     parser.add_argument('--model_nums', type=int, default=3, help='Number of training models')
     parser.add_argument('--lr', type=float, default=0.0002, help='Initial learning rate for adam')
-    parser.add_argument('--eps', type=int, default=10, help='Perturbation Budget during training, eps')
+    parser.add_argument('--eps', type=int, default=16, help='Perturbation Budget during training, eps')
     parser.add_argument('--model_type', type=str, default='ens',
                         help='Model under attack (discrimnator)')
     parser.add_argument('--gs', action='store_true', help='Apply gaussian smoothing')
@@ -203,22 +203,14 @@ def main():
         target =target.cuda()
 
         adv_logit = 0
-        logits_orig = 0
         # w = torch.from_numpy(np.random.dirichlet([1] * len(models_set)))
         for ii, (net, w) in enumerate(zip(models_set, adv_weight)):
             net.zero_grad()
             adv = netG(img)
             adv = torch.clamp(adv, 0.0, 1.0)
             adv_out = net(normalize(adv))
-            if args.loss_function =='r_ce':
-                orig_out = net(normalize(img))
-                logits_orig = logits_orig+ w * orig_out
             adv_logit = adv_logit + w * adv_out
-            
-        if args.loss_function == 'r_ce':
-            loss = torch.nn.CrossEntropyLoss()(adv_logit, target) + torch.nn.CrossEntropyLoss()(logits_orig, logits_orig.argmax(dim=-1).detach())
-        else:
-            loss = criterion(adv_logit, target)
+        loss = criterion(adv_logit, target)   
         loss.backward()
         optimG.step()
         # Projection
