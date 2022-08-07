@@ -27,16 +27,9 @@ parser = argparse.ArgumentParser(description='Targeted Transferable Perturbation
 parser.add_argument('--test_dir', default='../../../data/IN/val')
 parser.add_argument('--batch_size', type=int, default=20, help='Batch size for evaluation')
 parser.add_argument('--eps', type=int, default=16, help='Perturbation Budget')
-parser.add_argument('--iterations', type=int, default=6000, help='Number of training iterations')
+parser.add_argument('--noise_path', type=str, default='./noise_model/netG_meta_coco_', help='Noise UAP Path.')
 parser.add_argument('--target_model', type=str, default='vgg19_bn', help='Black-Box(unknown) model: SIN, Augmix etc')
-parser.add_argument('--main_type', type=str, default='ens', help='select test uap')
-parser.add_argument('--target', type=int, default=99, help='Target label to transfer')
-parser.add_argument('--source_model', type=str, default='resnet50', help='TTP Discriminator: \
-{res18, res50, res101, res152, dense121, dense161, dense169, dense201,\
- vgg11, vgg11_bn, vgg13, vgg13_bn, vgg16, vgg16_bn, vgg19, vgg19_bn,\
- ens_vgg16_vgg19_vgg11_vgg13_all_bn,\
- ens_res18_res50_res101_res152\
- ens_dense121_161_169_201}')
+parser.add_argument('--source_model', type=str, default='resnet50')
 parser.add_argument('--source_domain', type=str, default='IN', help='Source Domain (TTP): Natural Images (IN) or painting')
 parser.add_argument('--di', action='store_true', help='Apply di')
 parser.add_argument('--ti', action='store_true', help='Apply ti')
@@ -179,14 +172,10 @@ for idx, target in enumerate(targets):
                num_channels=3,
                use_cuda=args.use_cuda)
 
-    netG.load_state_dict(torch.load(
-        './{}/netG_{}_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.save_dir,args.source_model, args.source_domain,
-                                                          args.iterations, target, args.eps,args.di,args.ti)))
+    netG.load_state_dict(torch.load(args.noise_path+str(target)+'.pth'))
     netG = netG.cuda()
     netG.eval()
-    logger.info('netG_{}_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.source_model, args.source_domain,
-                                                          args.iterations, target, args.eps,args.di,args.ti))
-
+ 
     # Reset Metrics
     acc=0
     fool =0
