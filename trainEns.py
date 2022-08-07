@@ -51,7 +51,7 @@ def parse_arguments():
     parser.add_argument('--model_type', type=str, default='ens',
                         help='Model under attack (discrimnator)')
     parser.add_argument('--gs', action='store_true', help='Apply gaussian smoothing')
-    parser.add_argument('--save_dir', type=str, default='pretrained_generators', help='Directory to save generators')
+    parser.add_argument('--save_dir', type=str, default='noise_model', help='Directory to save generators')
     parser.add_argument('--ngpu', type=int, default=1,
                         help='Number of used GPUs (0 = CPU) (default: 1)')
     parser.add_argument('--confidence', default=0., type=float,
@@ -229,8 +229,6 @@ def main():
             running_loss = 0
         if iteration % 1000 == 0 and iteration != 0:
             torch.save(netG.state_dict(),
-                       args.save_dir + '/netG_ens_{}_{}_{}_{}_{}_{}.pth'.format(args.model_type, args.src,
-                                                                                 iteration,
-                                                                                 args.match_target, args.eps,args.l1))
+                       args.save_dir + '/netG_ens_{}_{}.pth'.format(args.src,args.match_target))
 if __name__ == '__main__':
     main()
