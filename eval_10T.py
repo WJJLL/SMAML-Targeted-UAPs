@@ -29,7 +29,7 @@ parser.add_argument('--batch_size', type=int, default=20, help='Batch size for e
 parser.add_argument('--eps', type=int, default=16, help='Perturbation Budget')
 parser.add_argument('--noise_path', type=str, default='./noise_model/netG_meta_coco_', help='Noise UAP Path.')
 parser.add_argument('--target_model', type=str, default='vgg19_bn', help='Black-Box(unknown) model: SIN, Augmix etc')
-parser.add_argument('--source_model', type=str, default='resnet50')
+parser.add_argument('--source_model', type=str, default='meta')
 parser.add_argument('--source_domain', type=str, default='IN', help='Source Domain (TTP): Natural Images (IN) or painting')
 parser.add_argument('--di', action='store_true', help='Apply di')
 parser.add_argument('--ti', action='store_true', help='Apply ti')
