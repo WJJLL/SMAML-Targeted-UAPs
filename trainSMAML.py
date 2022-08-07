@@ -205,10 +205,7 @@ class Meta(nn.Module):
                 running_loss = 0
             if iteration % 1000 == 0 and iteration != 0:
                 torch.save(self.net.state_dict(),
-                           args.save_dir + '/netG_meta_{}_{}_{}_{}_di_{}_ti_{}.pth'.format(args.src,
-                                                                                              iteration,
-                                                                                              args.match_target,
-                                                                                              args.eps,args.di,args.ti),_use_new_zipfile_serialization=False)
+                           args.save_dir + '/netG_meta_{}_{}.pth'.format(args.src,args.match_target),_use_new_zipfile_serialization=False)
 def main():
     args = parse_arguments()
     random.seed(args.pretrained_seed)
