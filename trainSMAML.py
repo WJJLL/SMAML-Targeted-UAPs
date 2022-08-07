@@ -58,14 +58,14 @@ def parse_arguments():
     parser.add_argument('--match_target', type=int, default=150, help='Target Domain samples')
     parser.add_argument('--match_dir', default='./ImageTarget', help='Path to data folder with target domain samples')
     parser.add_argument('--batch_size', type=int, default=20, help='Number of trainig samples/batch')
-    parser.add_argument('--iterations', type=int, default=6000, help='Number of training iterations')
+    parser.add_argument('--iterations', type=int, default=4000, help='Number of training iterations')
     parser.add_argument('--model_nums', type=int, default=3, help='Number of training models')
     parser.add_argument('--lr', type=float, default=0.0002, help='Initial learning rate for adam')
     parser.add_argument('--eps', type=int, default=16, help='Perturbation Budget during training, eps')
     parser.add_argument('--model_type', type=str, default='vgg16',
                         help='Model under attack (discrimnator)')
     parser.add_argument('--gs', action='store_true', help='Apply gaussian smoothing')
-    parser.add_argument('--save_dir', type=str, default='pretrained_generators', help='Directory to save generators')
+    parser.add_argument('--save_dir', type=str, default='noise_model', help='Directory to save generators')
     parser.add_argument('--ngpu', type=int, default=1,
                         help='Number of used GPUs (0 = CPU) (default: 1)')
     parser.add_argument('--confidence', default=0., type=float,
